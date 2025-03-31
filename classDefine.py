@@ -59,5 +59,48 @@ class Preferences:
             ujson.dump(self.data, file)
 
 class EnergyMonitor:
+    def __init__(self):
+        self.inPinI = None
+        self.ICAL = 0
+        self.offsetI = 0
+        self.filteredI = 0
+        self.sumI = 0
+        self.sqI = 0
+        self.Irms = 0
+        
+        self.inPinV = 0
+        self.VCAL = 0
+        self.PHASECAL = 0
+        self.offsetV = 0
+    
+    def current(self, inPinI, ICAL):
+        self.inPinI = inPinI
+        self.ICAL = ICAL
+        self.offsetI = ADC_COUNTS >> 1
+    
+    def calcIrms(self, number):
+        adc = machine.ADC(self.inPinI)
+
+        adc.width(machine.ADC.WIDTH_12BIT)
+
+        self.sumI = 0
+
+        for n in range(number):
+            sampleI = adc.read()
+
+            self.offsetI = (self.offsetI + (sampleI - self.offsetI) / 1024)
+            self.filteredI = sampleI - self.offsetI
+            
+            self.sqI = self.filteredI * self.filteredI
+            self.sumI += self.sqI
+
+            time.sleep(0.001)
+
+        I_RATIO = self.ICAL * ((SUPPLY_VOLTAGE / 1000.0) / ADC_COUNTS)
+        self.Irms = I_RATIO * math.sqrt(self.sumI / number)
+
+        self.sumI = 0
+        
+        return self.Irms
 
 class WebSocketClient:
