@@ -99,5 +99,9 @@ def WiFiGotIP():
     # ota.setupAsyncServer()
 
 def WiFiStationDisconnected():
+    main.WiFi.disconnect()
+    main.SERIAL.write("WiFi Lost\n")
+    main.wifiFail = 1
+    main.WiFi.connect(main.apSsid, main.apPassword)
 
 def NetworkInfo():
