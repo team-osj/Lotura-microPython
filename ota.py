@@ -106,5 +106,11 @@ def processor(var):
     return str()
 
 def convertFileSize(bytes):
-
+    if bytes < 1024:
+        return f"{str(bytes)} B"
+    elif bytes < 1048576:
+        return f"{str(bytes/1024.0)} kB" 
+    elif bytes < 1073741824:
+        return f"{str(bytes/1048576.0)} MB"  
+    
 class WebServer:
