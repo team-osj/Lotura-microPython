@@ -105,3 +105,17 @@ def WiFiStationDisconnected():
     main.WiFi.connect(main.apSsid, main.apPassword)
 
 def NetworkInfo():
+    string = f"Name = {main.deviceName}\n"
+    main.SERIAL.write(string)
+    main.SERIAL.write(WiFiStatusCode(main.WiFi.status()))
+    if main.WiFi.isconnected():
+        string = f"RSSI = {main.WiFi.status('rssi')}\n"
+        main.SERIAL.write(string)
+        ip = str(main.WiFi.ifconfig()[0])
+        string = f"Local IP = {str(ip)}\n"
+        main.SERIAL.write(string)
+    string = f"MAC = {main.WiFi.config('mac')}\n"
+    main.SERIAL.write(string)
+    string = f"SSID = {main.apSsid}\n"
+    main.SERIAL.write(string)
+    string = f"PASSWORD = {main.apPassword}"
