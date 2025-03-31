@@ -104,3 +104,77 @@ class EnergyMonitor:
         return self.Irms
 
 class WebSocketClient:
+    def __init__(self):
+        self.ws = None
+        self.isconnected = False
+
+    def _createAuthorizationHeader(self, id, pw):
+        if id and pw:
+            authString = f"{id}:{pw}"
+            authBase64 = base64.b64encode(authString.encode('utf-8')).decode('utf-8')
+            return {"Authorization": f"Basic {authBase64}"}
+        return {}
+
+    def _parseHeaderData(self, data):
+        headers = {}
+        lines = data.split("\r\n")
+        for line in lines:
+            if line.strip():
+                key, value = line.split(":", 1)
+                headers[key.strip()] = value.strip()
+        return headers
+
+    def connect(self, host, port, url, id=None, pw=None, HeaderData=None):
+        try:
+            parsed_headers = self._parseHeaderData(HeaderData)
+
+            headers = {
+                **parsed_headers,
+                **self._createAuthorizationHeader(id, pw)
+            }
+
+            url = f"wss://{host}:{port}{url}"
+
+            self.ws = create_connection(url, sslopt={"certfile": None, "keyfile": None}, headers=headers)
+            self.isconnected = True
+            string = f"[WSc] Connected to url: {url}\n"
+            main.SERIAL.write(string)
+            main.lastPingMillis = time.tick_ms()
+            main.pingFlag = True
+            if main.modeDebug:
+                if main.CH1Live == True:
+                    send.SendStatus(1, main.CH1CurrStatus)
+                if main.CH2Live == True:
+                    send.SendStatus(2, main.CH2CurrStatus)
+        except Exception as e:
+            print(f"Failed to connect: {e}")
+
+    def onEvent(self, event, callback):
+        if self.ws:
+            try:
+                message = self.ws.recv()
+                if event in message:
+                    callback(message)
+                if "ping" in message.lower():
+                    self.ws.send("pong")
+                    main.lastPingMillis = time.tick_ms()
+            except Exception as e:
+                string = f"Error while handling event: {e}\n"
+                main.SERIAL.write(string)
+
+    def send(self, message):
+        if self.ws and self.isconnected:
+            try:
+                self.ws.send(message)
+            except Exception as e:
+                string = f"Failed to send message: {e}\n"
+                main.SERIAL.write(string)
+
+    def disconnect(self):
+        if self.ws:
+            self.ws.close()
+            self.isconnected = False
+            main.SERIAL.write("[WSc] Disconnected!\n")
+
+    def isConnected(self):
+        return self.isconnected
