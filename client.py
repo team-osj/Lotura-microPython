@@ -74,6 +74,29 @@ def webSocketEvent(payload):
         main.webSocket.send(MyStatus_String)
 
 def WiFiGotIP():
+    main.SERIAL.write("WiFi connected ")
+    main.SERIAL.write(main.WiFi.ifconfig()[0])
+    main.SERIAL.write("\n")
+    main.webSocket.disconnect()
+    main.serverRetryMillis = main.currMillis
+    ip = str(main.WiFi.ifconfig()[0])
+    data = f"HWID: {str(main.serialNo)}\r\nCH1: {str(main.CH1DeviceNo)}\r\nCH2: {str(main.CH2DeviceNo)}\r\nROOM: {str(main.RoomNo)}"
+    
+    main.webSocket.connect(
+        host=serverinfo.SERVER_DOMAIN,
+        port=serverinfo.SERVER_PORT,
+        url=serverinfo.SERVER_URL,
+        id=str(main.authId), 
+        pw=str(main.authPassword),
+        HeaderData=data
+        )
+
+    main.webSocket.onEvent(webSocketEvent)
+
+    mdns.start(main.deviceName)
+    string = f"Host: http://{main.deviceName}.local/\n"
+    main.SERIAL.write(string)
+    # ota.setupAsyncServer()
 
 def WiFiStationDisconnected():
 
