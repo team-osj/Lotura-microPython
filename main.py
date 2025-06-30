@@ -300,3 +300,37 @@ async def WebsocketEvent(data):
                 s.write(ujson.dumps(status).encode())
     except Exception as e:
         print(f"[WSc] Error: {e}")
+
+async def SendStatus(ch, status):
+    if (ch == 1 and not isCh1Live) or (ch == 2 and not isCh2Live):
+        return 1
+    if staIf.isconnected():
+        currStatus = {
+            "title": "Update",
+            "id": ch1DeviceNo if ch == 1 else ch2DeviceNo,
+            "type": globals()[f"timeSendFlag{ch}"],
+            "state": status
+        }
+        globals()[f"timeSendFlag{ch}"] = 0
+        s = await WebsocketConnect()
+        if s:
+            s.write(ujson.dumps(currStatus).encode())
+            return 0
+    print("SendStatus Fail - No Server Connection")
+    return 1
+
+async def SendLog(ch, log):
+    if (ch == 1 and not isCh1Live) or (ch == 2 and not isCh2Live):
+        return 1
+    if staIf.isconnected():
+        logData = {
+            "title": "Log",
+            "id": ch1DeviceNo if ch == 1 else ch2DeviceNo,
+            "log": log
+        }
+        s = await WebsocketConnect()
+        if s:
+            s.write(ujson.dumps(logData).encode())
+            return 0
+    print("SendLog Fail - No Server Connection")
+    return 1
