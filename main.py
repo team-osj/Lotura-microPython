@@ -201,3 +201,102 @@ def NvsPutBool(key, value):
         pass
     with open(f"/nvs/{key}.txt", "w") as f:
         f.write("1" if value else "0")
+
+# WebSocket client (simplified, using socket for HTTPS)
+async def WebsocketConnect():
+    global isPingFlag, lastPingMillis
+    try:
+        addr = socket.getaddrinfo(serverDomain, serverPort)[0][-1]
+        s = socket.socket()
+        s.connect(addr)
+        # Simplified HTTPS handshake (MicroPython’s ussl is limited; consider external module)
+        s = ussl.wrap_socket(s)
+        headers = (
+            f"GET {serverUrl} HTTP/1.1\r\n"
+            f"Host: {serverDomain}\r\n"
+            f"Upgrade: websocket\r\n"
+            f"Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {ubinascii.b2a_base64(b'websocket').decode().strip()}\r\n"
+            f"HWID: {serialNo}\r\n"
+            f"CH1: {ch1DeviceNo}\r\n"
+            f"CH2: {ch2DeviceNo}\r\n"
+            f"ROOM: {roomNo}\r\n"
+            f"Authorization: Basic {ubinascii.b2a_base64(authId + ':' + authPasswd).decode().strip()}\r\n\r\n"
+        )
+        s.write(headers.encode())
+        response = s.readline()
+        if b"101 Switching Protocols" in response:
+            print("[WSc] Connected to WebSocket")
+            isPingFlag = True
+            lastPingMillis = utime.ticks_ms()
+            if isModeDebug:
+                if isCh1Live:
+                    SendStatus(1, ch1CurrStatus)
+                if isCh2Live:
+                    SendStatus(2, ch2CurrStatus)
+        return s
+    except Exception as e:
+        print(f"[WSc] Connection failed: {e}")
+        return None
+
+async def WebsocketLoop():
+    global isPingFlag, lastPingMillis
+    s = await WebsocketConnect()
+    while s:
+        try:
+            data = s.read(1024)
+            if data:
+                await WebsocketEvent(data)
+            if isPingFlag and utime.ticks_diff(utime.ticks_ms(), lastPingMillis) >= pingLateMillis:
+                isPingFlag = False
+                s.close()
+                break
+            await asyncio.sleep_ms(10)
+        except:
+            break
+    if s:
+        s.close()
+
+async def WebsocketEvent(data):
+    # Simplified WebSocket event handling
+    try:
+        payload = data.decode()
+        print(f"[WSc] get text: {payload}")
+        doc = ujson.loads(payload)
+        if doc.get("title") == "GetData":
+            status = {
+                "title": "GetData",
+                "debug": "No" if isModeDebug else "Yes",
+                "ch1Mode": "Wash" if isCh1Mode else "Dry",
+                "ch2Mode": "Wash" if isCh2Mode else "Dry",
+                "ch1Status": "Not Working" if ch1CurrStatus else "Working",
+                "ch2Status": "Not Working" if ch2CurrStatus else "Working",
+                "ch1CurrW": ch1CurrW,
+                "ch2CurrW": ch2CurrW,
+                "ch1FlowW": ch1FlowW,
+                "ch2FlowW": ch2FlowW,
+                "ch1CurrD": ch1CurrD,
+                "ch2CurrD": ch2CurrD,
+                "ch1EndDelayW": ch1EndDelayW,
+                "ch2EndDelayW": ch2EndDelayW,
+                "ch1EndDelayD": ch1EndDelayD,
+                "ch2EndDelayD": ch2EndDelayD,
+                "ch1DeviceNo": ch1DeviceNo,
+                "ch2DeviceNo": ch2DeviceNo,
+                "ch1Current": ampsTrms1,
+                "ch2Current": ampsTrms2,
+                "ch1Flow": lHour1,
+                "ch2Flow": lHour2,
+                "ch1Drain": waterSensorData1,
+                "ch2Drain": waterSensorData2,
+                "wifiSsid": apSsid,
+                "wifiRssi": staIf.status("rssi"),
+                "wifiIp": staIf.ifconfig()[0],
+                "mac": ubinascii.hexlify(staIf.config("mac")).decode(),
+                "fwVer": buildDate
+            }
+            s = await WebsocketConnect()
+            if s:
+                s.write(ujson.dumps(status).encode())
+    except Exception as e:
+        print(f"[WSc] Error: {e}")
