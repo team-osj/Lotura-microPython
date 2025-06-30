@@ -140,3 +140,64 @@ ct2.atten(ADC.ATTN_11DB)
 # WiFi setup
 staIf = network.WLAN(network.STA_IF)
 staIf.active(True)
+
+# NVS storage simulation
+def NvsGetString(key, default):
+    try:
+        with open(f"/nvs/{key}.txt", "r") as f:
+            return f.read()
+    except:
+        return default
+
+def NvsPutString(key, value):
+    try:
+        uos.mkdir("/nvs")
+    except:
+        pass
+    with open(f"/nvs/{key}.txt", "w") as f:
+        f.write(value)
+
+def NvsGetFloat(key, default):
+    try:
+        with open(f"/nvs/{key}.txt", "r") as f:
+            return float(f.read())
+    except:
+        return default
+
+def NvsPutFloat(key, value):
+    try:
+        uos.mkdir("/nvs")
+    except:
+        pass
+    with open(f"/nvs/{key}.txt", "w") as f:
+        f.write(str(value))
+
+def NvsGetUint(key, default):
+    try:
+        with open(f"/nvs/{key}.txt", "r") as f:
+            return int(f.read())
+    except:
+        return default
+
+def NvsPutUint(key, value):
+    try:
+        uos.mkdir("/nvs")
+    except:
+        pass
+    with open(f"/nvs/{key}.txt", "w") as f:
+        f.write(str(value))
+
+def NvsGetBool(key, default):
+    try:
+        with open(f"/nvs/{key}.txt", "r") as f:
+            return f.read() == "1"
+    except:
+        return default
+
+def NvsPutBool(key, value):
+    try:
+        uos.mkdir("/nvs")
+    except:
+        pass
+    with open(f"/nvs/{key}.txt", "w") as f:
+        f.write("1" if value else "0")
