@@ -850,3 +850,113 @@ def ParseFormData(data):
 async def WebServer():
     server = await asyncio.start_server(HandleClient, "0.0.0.0", 80)
     await server.serve_forever()
+
+# AT command handler
+async def HandleSerial():
+    while True:
+        if sys.stdin in uasyncio.select([sys.stdin])[0]:
+            line = sys.stdin.readline().strip()
+            dex = line.find("+")
+            dex1 = line.find('"')
+            end = len(line)
+            if dex != -1 and dex1 != -1:
+                atCommand = line[dex+1:dex1]
+                if atCommand == "HELP":
+                    print("AT+OK HELP")
+                elif atCommand == "UPDATE":
+                    print("AT+OK UPDATE")
+                elif atCommand == "CH1_SETVAR":
+                    print("AT+OK CH1_SETVAR")
+                    Ch1SetVar(line[dex1+1:end-1].split(",")[0], line[dex1+1:end-1].split(",")[1])
+                elif atCommand == "CH2_SETVAR":
+                    print("AT+OK CH2_SETVAR")
+                    Ch2SetVar(line[dex1+1:end-1].split(",")[0], line[dex1+1:end-1].split(",")[1])
+                elif atCommand == "NETWORK_INFO":
+                    print("AT+OK NETWORK_INFO")
+                    NetworkInfo()
+                elif atCommand == "SETAP_SSID":
+                    print("AT+OK SETAP_SSID")
+                    NvsPutString("apSsid", line[dex1+1:end-1])
+                elif atCommand == "SETAP_PASSWD":
+                    print("AT+OK SETAP_PASSWD")
+                    NvsPutString("apPasswd", line[dex1+1:end-1])
+                elif atCommand == "SET_SERIALNO":
+                    print("AT+OK SET_SERIALNO")
+                    NvsPutString("serialNo", line[dex1+1:end-1])
+                elif atCommand == "SET_AUTH_ID":
+                    print("AT+OK SET_AUTH_ID")
+                    NvsPutString("authId", line[dex1+1:end-1])
+                elif atCommand == "SET_AUTH_PASSWD":
+                    print("AT+OK SET_AUTH_PASSWD")
+                    NvsPutString("authPasswd", line[dex1+1:end-1])
+                elif atCommand == "FORMAT_NVS":
+                    print("AT+OK FORMAT_NVS")
+                    try:
+                        uos.remove("/nvs")
+                    except:
+                        pass
+                    machine.reset()
+                elif atCommand == "PRINT_HEAP":
+                    print("AT+OK PRINT_HEAP")
+                    print(f"{gc.mem_free()} Byte")
+                elif atCommand == "REBOOT":
+                    print("AT+OK REBOOT")
+                    await asyncio.sleep_ms(500)
+                    machine.reset()
+                else:
+                    print("ERROR: Unknown command")
+        await asyncio.sleep_ms(10)
+
+def Ch1SetVar(command, value):
+    global ch1DeviceNo, ch1CurrW, ch1FlowW, ch1CurrD, ch1EndDelayW, ch1EndDelayD, isCh1Live
+    print(f"ch1{command}: {value}")
+    if command == "DeviceNo":
+        ch1DeviceNo = value
+        NvsPutString("ch1DeviceNo", value)
+    elif command == "CurrentWash":
+        ch1CurrW = float(value)
+        NvsPutFloat("ch1CurrW", ch1CurrW)
+    elif command == "FlowWash":
+        ch1FlowW = int(value)
+        NvsPutUint("ch1FlowW", ch1FlowW)
+    elif command == "CurrentDry":
+        ch1CurrD = float(value)
+        NvsPutFloat("ch1CurrD", ch1CurrD)
+    elif command == "EndDelayWash":
+        ch1EndDelayW = int(value) * 10000
+        NvsPutUint("ch1EndDelayW", ch1EndDelayW)
+    elif command == "EndDelayDry":
+        ch1EndDelayD = int(value) * 1000
+        NvsPutUint("ch1EndDelayD", ch1EndDelayD)
+    elif command == "Enable":
+        isCh1Live = bool(int(value))
+        NvsPutBool("isCh1Live", isCh1Live)
+    else:
+        print(f"Command Not Found for: {command}")
+
+def Ch2SetVar(command, value):
+    global ch2DeviceNo, ch2CurrW, ch2FlowW, ch2CurrD, ch2EndDelayW, ch2EndDelayD, isCh2Live
+    print(f"ch2{command}: {value}")
+    if command == "DeviceNo":
+        ch2DeviceNo = value
+        NvsPutString("ch2DeviceNo", value)
+    elif command == "CurrentWash":
+        ch2CurrW = float(value)
+        NvsPutFloat("ch2CurrW", ch2CurrW)
+    elif command == "FlowWash":
+        ch2FlowW = int(value)
+        NvsPutUint("ch2FlowW", ch2FlowW)
+    elif command == "CurrentDry":
+        ch2CurrD = float(value)
+        NvsPutFloat("ch2CurrD", ch2CurrD)
+    elif command == "EndDelayWash":
+        ch2EndDelayW = int(value) * 10000
+        NvsPutUint("ch2EndDelayW", ch2EndDelayW)
+    elif command == "EndDelayDry":
+        ch2EndDelayD = int(value) * 1000
+        NvsPutUint("ch2EndDelayD", ch2EndDelayD)
+    elif command == "Enable":
+        isCh2Live = bool(int(value))
+        NvsPutBool("isCh2Live", isCh2Live)
+    else:
+        print(f"Command Not Found for: {command}")
