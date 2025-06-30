@@ -691,3 +691,162 @@ managerHtml = """
 </body>
 </html>
 """
+
+# Processor for HTML template
+def Processor(template, vars):
+    for key, value in vars.items():
+        template = template.replace(f"%{key}%", str(value))
+    return template
+
+# Web server
+async def HandleClient(reader, writer):
+    global isRebooting
+    try:
+        request = (await reader.read(1024)).decode()
+        headers = request.split("\r\n")
+        firstLine = headers[0]
+        method, path, _ = firstLine.split(" ")
+        
+        # Basic authentication
+        auth = None
+        for header in headers:
+            if header.startswith("Authorization: Basic "):
+                auth = ubinascii.a2b_base64(header[20:]).decode().split(":")
+                break
+        if auth != [authId, authPasswd]:
+            writer.write(b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"Secure Area\"\r\n\r\n")
+            await writer.drain()
+            return
+
+        vars = {
+            "deviceName": deviceName,
+            "apSsid": apSsid,
+            "apPasswd": apPasswd,
+            "wifiRssi": staIf.status("rssi") if staIf.isconnected() else "N/A",
+            "wifiQuality": "WiFi Not Connected" if not staIf.isconnected() else (
+                "Very Good" if staIf.status("rssi") > -40 else
+                "Good" if staIf.status("rssi") > -60 else
+                "Weak" if staIf.status("rssi") > -70 else "Poor"
+            ),
+            "wifiIp": staIf.ifconfig()[0] if staIf.isconnected() else "N/A",
+            "mac": ubinascii.hexlify(staIf.config("mac")).decode(),
+            "roomNo": roomNo,
+            "flashSize": str(uos.statvfs("/")[0] * uos.statvfs("/")[2] // 1024),
+            "heap": str(gc.mem_free() // 1024),
+            "buildVer": buildDate,
+            "ch1DeviceNo": ch1DeviceNo,
+            "isCh1Live": "Yes" if isCh1Live else "No",
+            "ch1Mode": "Wash" if isCh1Mode else "Dry",
+            "ch1CurrW": ch1CurrW,
+            "ch1FlowW": ch1FlowW,
+            "ch1CurrD": ch1CurrD,
+            "ch1EndDelayW": ch1EndDelayW,
+            "ch1EndDelayD": ch1EndDelayD,
+            "ampsTrms1": ampsTrms1,
+            "waterSensorData1": waterSensorData1,
+            "lHour1": lHour1,
+            "ch2DeviceNo": ch2DeviceNo,
+            "isCh2Live": "Yes" if isCh2Live else "No",
+            "ch2Mode": "Wash" if isCh2Mode else "Dry",
+            "ch2CurrW": ch2CurrW,
+            "ch2FlowW": ch2FlowW,
+            "ch2CurrD": ch2CurrD,
+            "ch2EndDelayW": ch2EndDelayW,
+            "ch2EndDelayD": ch2EndDelayD,
+            "ampsTrms2": ampsTrms2,
+            "waterSensorData2": waterSensorData2,
+            "lHour2": lHour2
+        }
+
+        if path == "/":
+            response = Processor(managerHtml, vars)
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" + response.encode())
+        elif path == "/wifi" and method == "POST":
+            data = headers[-1]
+            params = ParseFormData(data)
+            if "wifiSsid" in params:
+                NvsPutString("apSsid", params["wifiSsid"])
+                print(f"SSID set to: {params['wifiSsid']}")
+            if "wifiPass" in params:
+                NvsPutString("apPasswd", params["wifiPass"])
+                print(f"Password set to: {params['wifiPass']}")
+            writer.write(b"HTTP/1.1 302 Found\r\nLocation: /\r\n\r\n")
+        elif path == "/auth" and method == "POST":
+            data = headers[-1]
+            params = ParseFormData(data)
+            if "authId" in params:
+                global authId
+                authId = params["authId"]
+                NvsPutString("authId", authId)
+                print(f"authId: {authId}")
+            if "authPasswd" in params:
+                global authPasswd
+                authPasswd = params["authPasswd"]
+                NvsPutString("authPasswd", authPasswd)
+                print(f"authPasswd: {authPasswd}")
+            writer.write(b"HTTP/1.1 302 Found\r\nLocation: /\r\n\r\n")
+        elif path == "/CH1" and method == "POST":
+            data = headers[-1]
+            params = ParseFormData(data)
+            if "CH1" in params and "value" in params:
+                command, value = params["CH1"], params["value"]
+                Ch1SetVar(command, value)
+            writer.write(b"HTTP/1.1 302 Found\r\nLocation: /\r\n\r\n")
+        elif path == "/CH2" and method == "POST":
+            data = headers[-1]
+            params = ParseFormData(data)
+            if "CH2" in params and "value" in params:
+                command, value = params["CH2"], params["value"]
+                Ch2SetVar(command, value)
+            writer.write(b"HTTP/1.1 302 Found\r\nLocation: /\r\n\r\n")
+        elif path == "/roomno" and method == "POST":
+            data = headers[-1]
+            params = ParseFormData(data)
+            if "roomNo" in params:
+                global roomNo
+                roomNo = params["roomNo"]
+                NvsPutString("roomNo", roomNo)
+                print(f"roomNo: {roomNo}")
+            writer.write(b"HTTP/1.1 302 Found\r\nLocation: /\r\n\r\n")
+
+            
+        elif path == "/update" and method == "POST":
+            # Simplified OTA (write to file, reboot to apply)
+            data = headers[-1]
+            if "update" in data:
+                with open("/update.bin", "wb") as f:
+                    f.write(data)  # Simplified; real OTA needs chunked reading
+                isRebooting = True
+                response = okHtml if isRebooting else failedHtml
+                writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n" + response.encode())
+            else:
+                writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\n")
+
+
+        elif path == "/reboot" and method == "GET":
+            writer.write(b"HTTP/1.1 302 Found\r\nLocation: /\r\n\r\n")
+            await writer.drain()
+            machine.reset()
+        elif path == "/SetDefaultVal" and method == "GET":
+            SetDefaultVal()
+            writer.write(b"HTTP/1.1 302 Found\r\nLocation: /\r\n\r\n")
+        else:
+            writer.write(b"HTTP/1.1 404 Not Found\r\n\r\n")
+        
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+    except Exception as e:
+        print(f"Web server error: {e}")
+
+def ParseFormData(data):
+    params = {}
+    for pair in data.split("&"):
+        if "=" in pair:
+            key, value = pair.split("=", 1)
+            params[key] = value
+    return params
+
+async def WebServer():
+    server = await asyncio.start_server(HandleClient, "0.0.0.0", 80)
+    await server.serve_forever()
