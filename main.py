@@ -202,6 +202,29 @@ def NvsPutBool(key, value):
     with open(f"/nvs/{key}.txt", "w") as f:
         f.write("1" if value else "0")
 
+# Flow sensor interrupts
+def Flow1(pin):
+    global flowFrequency1
+    flowFrequency1 += 1
+
+def Flow2(pin):
+    global flowFrequency2
+    flowFrequency2 += 1
+
+flow1.irq(trigger=Pin.IRQ_FALLING, handler=Flow1)
+flow2.irq(trigger=Pin.IRQ_FALLING, handler=Flow2)
+
+# Current measurement (simulating EmonLib)
+def CalcIrms(adcPin, calibration):
+    samples = 1480
+    total = 0.0
+    for _ in range(samples):
+        value = adcPin.read()
+        total += (value - 2048) ** 2  # Assuming 12-bit ADC, centered at 2048
+        utime.sleep_us(100)
+    irms = math.sqrt(total / samples) * calibration
+    return irms
+
 # WebSocket client (simplified, using socket for HTTPS)
 async def WebsocketConnect():
     global isPingFlag, lastPingMillis
@@ -960,3 +983,517 @@ def Ch2SetVar(command, value):
         NvsPutBool("isCh2Live", isCh2Live)
     else:
         print(f"Command Not Found for: {command}")
+
+def DryerStatusJudgment(ampsTrms, cnt, m, previousMillisEnd, channelNum):
+    global jsonLogFlag1, jsonLogFlag2, jsonLogFlag1C, jsonLogFlag2C
+    global jsonLogCnt1, jsonLogCnt2, jsonLogMillis1, jsonLogMillis2
+    global ch1Cnt, ch2Cnt, ch1CurrStatus, ch2CurrStatus, m1, m2
+    global timeSendFlag1, timeSendFlag2
+
+    if channelNum == 1 and ampsTrms < ch1CurrD and jsonLogFlag1:
+        if jsonLogFlag1C == 1:
+            jsonLogFlag1C = 0
+            jsonLog1[str(jsonLogCnt1)] = {
+                "t": utime.ticks_diff(utime.ticks_ms(), jsonLogMillis1),
+                "n": "C",
+                "s": 0
+            }
+            if jsonLogCnt1 % 100 == 0:
+                jsonLogData1 = ujson.dumps(jsonLog1)
+                jsonLog1.clear()
+                SendLog(1, jsonLogData1)
+            jsonLogCnt1 += 1
+    elif channelNum == 2 and ampsTrms < ch2CurrD and jsonLogFlag2:
+        if jsonLogFlag2C == 1:
+            jsonLogFlag2C = 0
+            jsonLog2[str(jsonLogCnt2)] = {
+                "t": utime.ticks_diff(utime.ticks_ms(), jsonLogMillis2),
+                "n": "C",
+                "s": 0
+            }
+            if jsonLogCnt2 % 100 == 0:
+                jsonLogData2 = ujson.dumps(jsonLog2)
+                jsonLog2.clear()
+                SendLog(2, jsonLogData2)
+            jsonLogCnt2 += 1
+
+    if channelNum == 1 and ampsTrms > ch1CurrD:
+        if jsonLogFlag1:
+            if jsonLogFlag1C == 0:
+                jsonLogFlag1C = 1
+                jsonLog1[str(jsonLogCnt1)] = {
+                    "t": utime.ticks_diff(utime.ticks_ms(), jsonLogMillis1),
+                    "n": "C",
+                    "s": 1
+                }
+                if jsonLogCnt1 % 100 == 0:
+                    jsonLogData1 = ujson.dumps(jsonLog1)
+                    jsonLog1.clear()
+                    SendLog(1, jsonLogData1)
+                jsonLogCnt1 += 1
+        if cnt == 1:
+            timeSendFlag1 = 1
+            jsonLogFlag1 = 1
+            jsonLogCnt1 = 1
+            jsonLogMillis1 = utime.ticks_ms()
+            jsonLog1["START"] = {"local_time": ""}
+            ch1Cnt = 0
+            ch1Led.value(1)
+            ch1CurrStatus = 0
+            print(f"CH{channelNum} Dryer Started")
+            SendStatus(channelNum, 0)
+        m1 = 1
+    elif channelNum == 2 and ampsTrms > ch2CurrD:
+        if jsonLogFlag2:
+            if jsonLogFlag2C == 0:
+                jsonLogFlag2C = 1
+                jsonLog2[str(jsonLogCnt2)] = {
+                    "t": utime.ticks_diff(utime.ticks_ms(), jsonLogMillis2),
+                    "n": "C",
+                    "s": 1
+                }
+                if jsonLogCnt2 % 100 == 0:
+                    jsonLogData2 = ujson.dumps(jsonLog2)
+                    jsonLog2.clear()
+                    SendLog(2, jsonLogData2)
+                jsonLogCnt2 += 1
+        if cnt == 1:
+            timeSendFlag2 = 1
+            jsonLogFlag2 = 1
+            jsonLogCnt2 = 1
+            jsonLogMillis2 = utime.ticks_ms()
+            jsonLog2["START"] = {"local_time": ""}
+            ch2Cnt = 0
+            ch2Led.value(1)
+            ch2CurrStatus = 0
+            print(f"CH{channelNum} Dryer Started")
+            SendStatus(channelNum, 0)
+        m2 = 1
+    else:
+        if previousMillisEnd > utime.ticks_ms():
+            previousMillisEnd = utime.ticks_ms()
+        if m:
+            if channelNum == 1:
+                globals()["previousMillisEnd1"] = utime.ticks_ms()
+                m1 = 0
+            if channelNum == 2:
+                globals()["previousMillisEnd2"] = utime.ticks_ms()
+                m2 = 0
+        elif cnt:
+            pass
+        elif channelNum == 1 and utime.ticks_diff(utime.ticks_ms(), previousMillisEnd) >= ch1EndDelayD:
+            timeSendFlag1 = 1
+            jsonLogFlag1C = 0
+            jsonLogFlag1 = 0
+            jsonLog1["END"] = {"local_time": ""}
+            jsonLogData1 = ujson.dumps(jsonLog1)
+            jsonLog1.clear()
+            print("CH1 Dryer Ended")
+            SendStatus(1, 1)
+            SendLog(1, jsonLogData1)
+            ch1Cnt = 1
+            ch1Led.value(0)
+            ch1CurrStatus = 1
+        elif channelNum == 2 and utime.ticks_diff(utime.ticks_ms(), previousMillisEnd) >= ch2EndDelayD:
+            timeSendFlag2 = 1
+            jsonLogFlag2C = 0
+            jsonLogFlag2 = 0
+            jsonLog2["END"] = {"local_time": ""}
+            jsonLogData2 = ujson.dumps(jsonLog2)
+            jsonLog2.clear()
+            print("CH2 Dryer Ended")
+            SendStatus(2, 1)
+            SendLog(2, jsonLogData2)
+            ch2Cnt = 1
+            ch2Led.value(0)
+            ch2CurrStatus = 1
+
+def StatusJudgment(ampsTrms, waterSensorData, lHour, cnt, m, previousMillisEnd, channelNum):
+    global jsonLogFlag1, jsonLogFlag2, jsonLogFlag1C, jsonLogFlag2C
+    global jsonLogFlag1F, jsonLogFlag2F, jsonLogFlag1W, jsonLogFlag2W
+    global jsonLogCnt1, jsonLogCnt2, jsonLogMillis1, jsonLogMillis2
+    global ch1Cnt, ch2Cnt, ch1CurrStatus, ch2CurrStatus, m1, m2
+    global timeSendFlag1, timeSendFlag2
+    sePrevMillis1 = 0
+    sePrevMillis2 = 0
+    seCnt1 = 0
+    seCnt2 = 0
+
+    if channelNum == 1 and (ampsTrms > ch1CurrW or waterSensorData or lHour > ch1FlowW) and seCnt1 == 0:
+        seCnt1 = 1
+        sePrevMillis1 = utime.ticks_ms()
+    elif channelNum == 1 and (ampsTrms < ch1CurrW and not waterSensorData and lHour < ch1FlowW) and seCnt1 == 1:
+        seCnt1 = 0
+
+    if channelNum == 2 and (ampsTrms > ch2CurrW or waterSensorData or lHour > ch2FlowW) and seCnt2 == 0:
+        seCnt2 = 1
+        sePrevMillis2 = utime.ticks_ms()
+    elif channelNum == 2 and (ampsTrms < ch2CurrW and not waterSensorData and lHour < ch2FlowW) and seCnt2 == 1:
+        seCnt2 = 0
+
+    if channelNum == 1 and jsonLogFlag1:
+        if ampsTrms > ch1CurrW and jsonLogFlag1C == 0:
+            jsonLogFlag1C = 1
+            jsonLog1[str(jsonLogCnt1)] = {
+                "t": utime.ticks_diff(utime.ticks_ms(), jsonLogMillis1),
+                "n": "C",
+                "s": 1
+            }
+            if jsonLogCnt1 % 100 == 0:
+                jsonLogData1 = ujson.dumps(jsonLog1)
+                jsonLog1.clear()
+                SendLog(1, jsonLogData1)
+            jsonLogCnt1 += 1
+        elif ampsTrms < ch1CurrW and jsonLogFlag1C == 1:
+            jsonLogFlag1C = 0
+            jsonLog1[str(jsonLogCnt1)] = {
+                "t": utime.ticks_diff(utime.ticks_ms(), jsonLogMillis1),
+                "n": "C",
+                "s": 0
+            }
+            if jsonLogCnt1 % 100 == 0:
+                jsonLogData1 = ujson.dumps(jsonLog1)
+                jsonLog1.clear()
+                SendLog(1, jsonLogData1)
+            jsonLogCnt1 += 1
+        if lHour > ch1FlowW and jsonLogFlag1F == 0:
+            jsonLogFlag1F = 1
+            jsonLog1[str(jsonLogCnt1)] = {
+                "t": utime.ticks_diff(utime.ticks_ms(), jsonLogMillis1),
+                "n": "F",
+                "s": 1
+            }
+            if jsonLogCnt1 % 100 == 0:
+                jsonLogData1 = ujson.dumps(jsonLog1)
+                jsonLog1.clear()
+                SendLog(1, jsonLogData1)
+            jsonLogCnt1 += 1
+        elif lHour < ch1FlowW and jsonLogFlag1F == 1:
+            jsonLogFlag1F = 0
+            jsonLog1[str(jsonLogCnt1)] = {
+                "t": utime.ticks_diff(utime.ticks_ms(), jsonLogMillis1),
+                "n": "F",
+                "s": 0
+            }
+            if jsonLogCnt1 % 100 == 0:
+                jsonLogData1 = ujson.dumps(jsonLog1)
+                jsonLog1.clear()
+                SendLog(1, jsonLogData1)
+            jsonLogCnt1 += 1
+        if waterSensorData and jsonLogFlag1W == 0:
+            jsonLogFlag1W = 1
+            jsonLog1[str(jsonLogCnt1)] = {
+                "t": utime.ticks_diff(utime.ticks_ms(), jsonLogMillis1),
+                "n": "W",
+                "s": 1
+            }
+            if jsonLogCnt1 % 100 == 0:
+                jsonLogData1 = ujson.dumps(jsonLog1)
+                jsonLog1.clear()
+                SendLog(1, jsonLogData1)
+            jsonLogCnt1 += 1
+        elif not waterSensorData and jsonLogFlag1W == 1:
+            jsonLogFlag1W = 0
+            jsonLog1[str(jsonLogCnt1)] = {
+                "t": utime.ticks_diff(utime.ticks_ms(), jsonLogMillis1),
+                "n": "W",
+                "s": 0
+            }
+            if jsonLogCnt1 % 100 == 0:
+                jsonLogData1 = ujson.dumps(jsonLog1)
+                jsonLog1.clear()
+                SendLog(1, jsonLogData1)
+            jsonLogCnt1 += 1
+
+    if channelNum == 2 and jsonLogFlag2:
+        if ampsTrms > ch2CurrW and jsonLogFlag2C == 0:
+            jsonLogFlag2C = 1
+            jsonLog2[str(jsonLogCnt2)] = {
+                "t": utime.ticks_diff(utime.ticks_ms(), jsonLogMillis2),
+                "n": "C",
+                "s": 1
+            }
+            if jsonLogCnt2 % 100 == 0:
+                jsonLogData2 = ujson.dumps(jsonLog2)
+                jsonLog2.clear()
+                SendLog(2, jsonLogData2)
+            jsonLogCnt2 += 1
+        elif ampsTrms < ch2CurrW and jsonLogFlag2C == 1:
+            jsonLogFlag2C = 0
+            jsonLog2[str(jsonLogCnt2)] = {
+                "t": utime.ticks_diff(utime.ticks_ms(), jsonLogMillis2),
+                "n": "C",
+                "s": 0
+            }
+            if jsonLogCnt2 % 100 == 0:
+                jsonLogData2 = ujson.dumps(jsonLog2)
+                jsonLog2.clear()
+                SendLog(2, jsonLogData2)
+            jsonLogCnt2 += 1
+        if lHour > ch2FlowW and jsonLogFlag2F == 0:
+            jsonLogFlag2F = 1
+            jsonLog2[str(jsonLogCnt2)] = {
+                "t": utime.ticks_diff(utime.ticks_ms(), jsonLogMillis2),
+                "n": "F",
+                "s": 1
+            }
+            if jsonLogCnt2 % 100 == 0:
+                jsonLogData2 = ujson.dumps(jsonLog2)
+                jsonLog2.clear()
+                SendLog(2, jsonLogData2)
+            jsonLogCnt2 += 1
+        elif lHour < ch2FlowW and jsonLogFlag2F == 1:
+            jsonLogFlag2F = 0
+            jsonLog2[str(jsonLogCnt2)] = {
+                "t": utime.ticks_diff(utime.ticks_ms(), jsonLogMillis2),
+                "n": "F",
+                "s": 0
+            }
+            if jsonLogCnt2 % 100 == 0:
+                jsonLogData2 = ujson.dumps(jsonLog2)
+                jsonLog2.clear()
+                SendLog(2, jsonLogData2)
+            jsonLogCnt2 += 1
+        if waterSensorData and jsonLogFlag2W == 0:
+            jsonLogFlag2W = 1
+            jsonLog2[str(jsonLogCnt2)] = {
+                "t": utime.ticks_diff(utime.ticks_ms(), jsonLogMillis2),
+                "n": "W",
+                "s": 1
+            }
+            if jsonLogCnt2 % 100 == 0:
+                jsonLogData2 = ujson.dumps(jsonLog2)
+                jsonLog2.clear()
+                SendLog(2, jsonLogData2)
+            jsonLogCnt2 += 1
+        elif not waterSensorData and jsonLogFlag2W == 1:
+            jsonLogFlag2W = 0
+            jsonLog2[str(jsonLogCnt2)] = {
+                "t": utime.ticks_diff(utime.ticks_ms(), jsonLogMillis2),
+                "n": "W",
+                "s": 0
+            }
+            if jsonLogCnt2 % 100 == 0:
+                jsonLogData2 = ujson.dumps(jsonLog2)
+                jsonLog2.clear()
+                SendLog(2, jsonLogData2)
+            jsonLogCnt2 += 1
+
+    if channelNum == 1 and utime.ticks_diff(utime.ticks_ms(), sePrevMillis1) >= 500 and seCnt1 == 1:
+        if cnt == 1:
+            timeSendFlag1 = 1
+            jsonLogFlag1 = 1
+            jsonLogCnt1 = 1
+            jsonLogMillis1 = utime.ticks_ms()
+            jsonLog1["START"] = {"local_time": ""}
+            seCnt1 = 0
+            ch1Cnt = 0
+            ch1Led.value(1)
+            ch1CurrStatus = 0
+            print(f"CH{channelNum} Washer Started")
+            SendStatus(channelNum, 0)
+        m1 = 1
+    elif channelNum == 2 and utime.ticks_diff(utime.ticks_ms(), sePrevMillis2) >= 500 and seCnt2 == 1:
+        if cnt == 1:
+            timeSendFlag2 = 1
+            jsonLogFlag2 = 1
+            jsonLogCnt2 = 1
+            jsonLogMillis2 = utime.ticks_ms()
+            jsonLog2["START"] = {"local_time": ""}
+            seCnt2 = 0
+            ch2Cnt = 0
+            ch2Led.value(1)
+            ch2CurrStatus = 0
+            print(f"CH{channelNum} Washer Started")
+            SendStatus(channelNum, 0)
+        m2 = 1
+    else:
+        if previousMillisEnd > utime.ticks_ms():
+            previousMillisEnd = utime.ticks_ms()
+        if m:
+            if channelNum == 1:
+                globals()["previousMillisEnd1"] = utime.ticks_ms()
+                m1 = 0
+            if channelNum == 2:
+                globals()["previousMillisEnd2"] = utime.ticks_ms()
+                m2 = 0
+        elif cnt:
+            pass
+        elif channelNum == 1 and utime.ticks_diff(utime.ticks_ms(), previousMillisEnd) >= ch1EndDelayW:
+            timeSendFlag1 = 1
+            jsonLogFlag1C = 0
+            jsonLogFlag1F = 0
+            jsonLogFlag1W = 0
+            jsonLogFlag1 = 0
+            jsonLog1["END"] = {"local_time": ""}
+            jsonLogData1 = ujson.dumps(jsonLog1)
+            jsonLog1.clear()
+            print("CH1 Washer Ended")
+            SendStatus(1, 1)
+            SendLog(1, jsonLogData1)
+            ch1Cnt = 1
+            ch1Led.value(0)
+            ch1CurrStatus = 1
+        elif channelNum == 2 and utime.ticks_diff(utime.ticks_ms(), previousMillisEnd) >= ch2EndDelayW:
+            timeSendFlag2 = 1
+            jsonLogFlag2C = 0
+            jsonLogFlag2F = 0
+            jsonLogFlag2W = 0
+            jsonLogFlag2 = 0
+            jsonLog2["END"] = {"local_time": ""}
+            jsonLogData2 = ujson.dumps(jsonLog2)
+            jsonLog2.clear()
+            print("CH2 Washer Ended")
+            SendStatus(2, 1)
+            SendLog(2, jsonLogData2)
+            ch2Cnt = 1
+            ch2Led.value(0)
+            ch2CurrStatus = 1
+
+def SetDefaultVal():
+    global apSsid, apPasswd, serialNo, authId, authPasswd
+    global ch1DeviceNo, ch2DeviceNo, ch1CurrW, ch2CurrW
+    global ch1FlowW, ch2FlowW, ch1CurrD, ch2CurrD
+    global ch1EndDelayW, ch2EndDelayW, ch1EndDelayD, ch2EndDelayD
+    global isCh1Live, isCh2Live, roomNo, deviceName
+
+    apSsid = NvsGetString("apSsid", "")
+    apPasswd = NvsGetString("apPasswd", "")
+    serialNo = NvsGetString("serialNo", "0")
+    authId = NvsGetString("authId", "")
+    authPasswd = NvsGetString("authPasswd", "")
+    ch1DeviceNo = NvsGetString("ch1DeviceNo", "1")
+    ch2DeviceNo = NvsGetString("ch2DeviceNo", "2")
+    ch1CurrW = NvsGetFloat("ch1CurrW", 0.2)
+    ch2CurrW = NvsGetFloat("ch2CurrW", 0.2)
+    ch1FlowW = NvsGetUint("ch1FlowW", 50)
+    ch2FlowW = NvsGetUint("ch2FlowW", 50)
+    ch1CurrD = NvsGetFloat("ch1CurrD", 0.5)
+    ch2CurrD = NvsGetFloat("ch2CurrD", 0.5)
+    ch1EndDelayW = NvsGetUint("ch1EndDelayW", 10) * 10000
+    ch2EndDelayW = NvsGetUint("ch2EndDelayW", 10) * 10000
+    ch1EndDelayD = NvsGetUint("ch1EndDelayD", 10) * 1000
+    ch2EndDelayD = NvsGetUint("ch2EndDelayD", 10) * 1000
+    isCh1Live = NvsGetBool("isCh1Live", True)
+    isCh2Live = NvsGetBool("isCh2Live", True)
+    roomNo = NvsGetString("roomNo", "0")
+    deviceName = defaultDeviceName + serialNo
+    print(f"My Name Is: {deviceName}")
+    print(f"CH1: {ch1DeviceNo} CH2: {ch2DeviceNo}")
+    if authId == "" or authPasswd == "":
+        print("NO AUTH CODE!!! YOU NEED TO CONFIG SERVER AUTHENTICATION BY AT+SET_AUTH_ID AND AT+SET_AUTH_PASSWD IN DEBUG MODE!!!")
+    if apSsid == "":
+        print("NO WIFI SSID!!! YOU NEED TO CONFIG WIFI BY AT+SETAP_SSID AND AT+SETAP_PASSWD IN DEBUG MODE!!!")
+    print(f"ch1CurrWash: {ch1CurrW} ch2CurrWash: {ch2CurrW}")
+    print(f"ch1FlowWash: {ch1FlowW} ch2FlowWash: {ch2FlowW}")
+    print(f"ch1DelayWash: {ch1EndDelayW} ch2DelayWash: {ch2EndDelayW}")
+    print(f"ch1CurrDry: {ch1CurrD} ch2CurrDry: {ch2CurrD}")
+    print(f"ch1DelayDry: {ch1EndDelayD} ch2DelayDry: {ch2EndDelayD}")
+    print(f"ch1Enable: {isCh1Live} ch2Enable: {isCh2Live}")
+
+def NetworkInfo():
+    print(f"Name = {deviceName}")
+    print(f"WiFi Status: {'Connected' if staIf.isconnected() else 'Disconnected'}")
+    if staIf.isconnected():
+        print(f"RSSI = {staIf.status('rssi')}")
+        print(f"Local IP = {staIf.ifconfig()[0]}")
+    print(f"MAC = {ubinascii.hexlify(staIf.config('mac')).decode()}")
+    print(f"SSID = {apSsid}")
+    print(f"PASSWORD = {apPasswd}")
+
+async def MainLoop():
+    global currMillis, previousMillis, ledMillisPrev, isWifiFail
+    global ampsTrms1, ampsTrms2, waterSensorData1, waterSensorData2
+    global lHour1, lHour2, flowFrequency1, flowFrequency2
+    global jsonLogFlag1, jsonLogFlag2
+
+    SetDefaultVal()
+    isModeDebug = not debugPin.value()
+    isCh1Mode = not ch1Mode.value()
+    isCh2Mode = not ch2Mode.value()
+    print(f"FW_VER: {buildDate}")
+    if isModeDebug:
+        print("YOU ARE IN THE DEBUG MODE!!!")
+    print(f"ch1Mode: {isCh1Mode}")
+    print(f"ch2Mode: {isCh2Mode}")
+
+    # Sensor stabilization
+    for _ in range(30):
+        CalcIrms(ct1, 30.7)
+        CalcIrms(ct2, 30.7)
+        await asyncio.sleep_ms(10)
+
+    print(f"Boot Heap: {gc.mem_free()}")
+    statusPin.value(1)
+
+    if apSsid:
+        print(f"Connecting to WiFi .. {apSsid}")
+        staIf.connect(apSsid, apPasswd)
+        wifiTimeout = 0
+        while not staIf.isconnected() and wifiTimeout < 25:
+            statusPin.value(0)
+            await asyncio.sleep_ms(100)
+            statusPin.value(1)
+            await asyncio.sleep_ms(100)
+            wifiTimeout += 1
+        if not staIf.isconnected():
+            print("Skip WiFi Connection Due to Timeout")
+        else:
+            print(f"WiFi connected {staIf.ifconfig()[0]}")
+            await WebsocketConnect()
+            asyncio.create_task(WebServer())
+
+    while True:
+        currMillis = utime.ticks_ms()
+        if isRebooting:
+            await asyncio.sleep_ms(100)
+            machine.reset()
+
+        if staIf.isconnected():
+            isWifiFail = 0
+            statusPin.value(1)
+            asyncio.create_task(WebsocketLoop())
+        else:
+            isWifiFail = 1
+            if utime.ticks_diff(currMillis, ledMillisPrev) >= 100:
+                ledMillisPrev = currMillis
+                statusPin.value(not statusPin.value())
+
+        if isModeDebug:
+            ampsTrms1 = CalcIrms(ct1, 30.7)
+            ampsTrms2 = CalcIrms(ct2, 30.7)
+
+            if utime.ticks_diff(currMillis, previousMillis) >= sensPeriod:
+                previousMillis = currMillis
+                waterSensorData1 = drain1.value()
+                waterSensorData2 = drain2.value()
+                lHour1 = (flowFrequency1 * 60 / 7.5)
+                lHour2 = (flowFrequency2 * 60 / 7.5)
+                flowFrequency1 = 0
+                flowFrequency2 = 0
+
+            if isCh1Mode:
+                StatusJudgment(ampsTrms1, waterSensorData1, lHour1, ch1Cnt, m1, previousMillisEnd1, 1)
+            else:
+                DryerStatusJudgment(ampsTrms1, ch1Cnt, m1, previousMillisEnd1, 1)
+
+            if isCh2Mode:
+                StatusJudgment(ampsTrms2, waterSensorData2, lHour2, ch2Cnt, m2, previousMillisEnd2, 2)
+            else:
+                DryerStatusJudgment(ampsTrms2, ch2Cnt, m2, previousMillisEnd2, 2)
+        else:
+            if utime.ticks_diff(currMillis, ledMillisPrev) >= 100:
+                ledMillisPrev = currMillis
+                ledStatus = 1 - ledStatus
+                ch1Led.value(ledStatus)
+                ch2Led.value(not ledStatus)
+
+        await asyncio.sleep_ms(10)
+
+# Run the main loop
+try:
+    asyncio.run(MainLoop())
+except KeyboardInterrupt:
+    print("Program interrupted")
+finally:
+    asyncio.new_event_loop()
